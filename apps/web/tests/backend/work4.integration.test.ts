@@ -16,6 +16,7 @@ import {
 import {
   DomainError,
   createCustomerOrder,
+  createOrderQuote,
   createDepositRequest,
   createSupportTicket,
   getOwnedOrder,
@@ -59,10 +60,12 @@ async function resetDatabase() {
   await db.paymentEvent.deleteMany();
   await db.payment.deleteMany();
   await db.walletTransaction.deleteMany();
+  await db.walletReservation.deleteMany();
   await db.orderLog.deleteMany();
   await db.supportMessage.deleteMany();
   await db.deposit.deleteMany();
   await db.order.deleteMany();
+  await db.orderQuote.deleteMany();
   await db.supportTicket.deleteMany();
   await db.passwordResetToken.deleteMany();
   await db.session.deleteMany();
@@ -146,11 +149,22 @@ async function createUser(email: string, balanceMinor = 0n) {
   return user;
 }
 
+async function createQuotedOrder(userId: string, input: { serviceId: string; targetUrl: string; quantity: number }, key: string) {
+  const quote = await createOrderQuote(userId, { serviceId: input.serviceId, quantity: input.quantity });
+  return createCustomerOrder(userId, { quoteId: quote.id, targetUrl: input.targetUrl }, key);
+}
+
 function isDomainCode(code: string) {
   return (error: unknown) => error instanceof DomainError && error.code === code;
 }
 
 test("Work 04 backend/database integration", async (t) => {
+  const previousProviderRouting = process.env.PROVIDER_ROUTING_ENABLED;
+  process.env.PROVIDER_ROUTING_ENABLED = "false";
+  t.after(() => {
+    if (previousProviderRouting === undefined) delete process.env.PROVIDER_ROUTING_ENABLED;
+    else process.env.PROVIDER_ROUTING_ENABLED = previousProviderRouting;
+  });
   passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
   await t.test("AUTH: register, duplicate email, valid and invalid credentials", async () => {
@@ -183,19 +197,17 @@ test("Work 04 backend/database integration", async (t) => {
     assert.equal((await verifyCustomerCredentials("profile-a@example.com", "NewPass1234"))?.id, first.id);
   });
 
-  await t.test("ORDER: valid order debits wallet, writes ledger and order log atomically", async () => {
+  await t.test("ORDER: valid order reserves wallet funds and writes its order log atomically", async () => {
     await resetDatabase();
     const user = await createUser("order@example.com", 200000n);
-    const order = await createCustomerOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/post/1", quantity: 500 }, "idem-order-valid-0001");
+    const order = await createQuotedOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/post/1", quantity: 500 }, "idem-order-valid-0001");
     assert.equal(order.status, OrderStatus.PENDING);
     assert.equal(order.chargeMinor, 50000n);
     const db = getDb();
     const wallet = await db.wallet.findUniqueOrThrow({ where: { userId: user.id } });
-    assert.equal(wallet.balanceMinor, 150000n);
-    const purchase = await db.walletTransaction.findFirstOrThrow({ where: { referenceId: order.publicId, type: WalletTransactionType.PURCHASE } });
-    assert.equal(purchase.amountMinor, -50000n);
-    assert.equal(purchase.balanceBeforeMinor, 200000n);
-    assert.equal(purchase.balanceAfterMinor, 150000n);
+    assert.equal(wallet.balanceMinor, 200000n);
+    assert.equal(wallet.reservedMinor, 50000n);
+    assert.equal(await db.walletTransaction.count({ where: { referenceId: order.publicId, type: WalletTransactionType.PURCHASE } }), 0);
     const logs = await db.orderLog.findMany({ where: { orderId: order.id } });
     assert.equal(logs.length, 1);
     assert.equal(logs[0]?.toStatus, OrderStatus.PENDING);
@@ -204,23 +216,24 @@ test("Work 04 backend/database integration", async (t) => {
   await t.test("ORDER: inactive/missing service and min/max validation are rejected without debit", async () => {
     await resetDatabase();
     const user = await createUser("validate@example.com", 200000n);
-    await assert.rejects(() => createCustomerOrder(user.id, { serviceId: "missing", targetUrl: "https://example.com/x", quantity: 500 }, "idem-missing-0001"), isDomainCode("SERVICE_NOT_FOUND"));
-    await assert.rejects(() => createCustomerOrder(user.id, { serviceId: "svc-disabled", targetUrl: "https://example.com/x", quantity: 500 }, "idem-disabled-0001"), isDomainCode("SERVICE_UNAVAILABLE"));
-    await assert.rejects(() => createCustomerOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/x", quantity: 99 }, "idem-min-0001"), isDomainCode("VALIDATION_ERROR"));
-    await assert.rejects(() => createCustomerOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/x", quantity: 10001 }, "idem-max-0001"), isDomainCode("VALIDATION_ERROR"));
+    await assert.rejects(() => createOrderQuote(user.id, { serviceId: "missing", quantity: 500 }), isDomainCode("SERVICE_NOT_FOUND"));
+    await assert.rejects(() => createOrderQuote(user.id, { serviceId: "svc-disabled", quantity: 500 }), isDomainCode("SERVICE_UNAVAILABLE"));
+    await assert.rejects(() => createOrderQuote(user.id, { serviceId: "svc-active", quantity: 99 }), isDomainCode("VALIDATION_ERROR"));
+    await assert.rejects(() => createOrderQuote(user.id, { serviceId: "svc-active", quantity: 10001 }), isDomainCode("VALIDATION_ERROR"));
     assert.equal((await getDb().wallet.findUniqueOrThrow({ where: { userId: user.id } })).balanceMinor, 200000n);
   });
 
   await t.test("ORDER: URL is validated at authoritative API boundary schema", () => {
-    assert.equal(createOrderSchema.safeParse({ serviceId: "svc-active", targetUrl: "javascript:alert(1)", quantity: 500 }).success, false);
-    assert.equal(createOrderSchema.safeParse({ serviceId: "svc-active", targetUrl: "https://example.com/post", quantity: 500 }).success, true);
+    assert.equal(createOrderSchema.safeParse({ quoteId: "fdcd6a74-8cce-4c55-9472-c7ee76b2a3d5", targetUrl: "javascript:alert(1)" }).success, false);
+    assert.equal(createOrderSchema.safeParse({ quoteId: "fdcd6a74-8cce-4c55-9472-c7ee76b2a3d5", targetUrl: "https://example.com/post" }).success, true);
   });
 
   await t.test("ATOMICITY: insufficient balance creates no order or purchase ledger", async () => {
     await resetDatabase();
     const user = await createUser("atomic@example.com", 10000n);
     const before = (await getDb().wallet.findUniqueOrThrow({ where: { userId: user.id } })).balanceMinor;
-    await assert.rejects(() => createCustomerOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/atomic", quantity: 500 }, "idem-atomic-0001"), isDomainCode("INSUFFICIENT_BALANCE"));
+    const quote = await createOrderQuote(user.id, { serviceId: "svc-active", quantity: 500 });
+    await assert.rejects(() => createCustomerOrder(user.id, { quoteId: quote.id, targetUrl: "https://example.com/atomic" }, "idem-atomic-0001"), isDomainCode("INSUFFICIENT_BALANCE"));
     const db = getDb();
     const wallet = await db.wallet.findUniqueOrThrow({ where: { userId: user.id } });
     assert.equal(wallet.balanceMinor, before);
@@ -231,29 +244,36 @@ test("Work 04 backend/database integration", async (t) => {
   await t.test("IDEMPOTENCY: same key and payload returns one order; changed payload conflicts", async () => {
     await resetDatabase();
     const user = await createUser("idem@example.com", 200000n);
-    const input = { serviceId: "svc-active", targetUrl: "https://example.com/idempotent", quantity: 500 };
+    const quote = await createOrderQuote(user.id, { serviceId: "svc-active", quantity: 500 });
+    const input = { quoteId: quote.id, targetUrl: "https://example.com/idempotent" };
     const first = await createCustomerOrder(user.id, input, "idem-repeat-0001");
     const second = await createCustomerOrder(user.id, input, "idem-repeat-0001");
     assert.equal(second.id, first.id);
     const db = getDb();
     const wallet = await db.wallet.findUniqueOrThrow({ where: { userId: user.id } });
     assert.equal(await db.order.count({ where: { userId: user.id } }), 1);
-    assert.equal(await db.walletTransaction.count({ where: { walletId: wallet.id, type: WalletTransactionType.PURCHASE } }), 1);
-    await assert.rejects(() => createCustomerOrder(user.id, { ...input, quantity: 600 }, "idem-repeat-0001"), isDomainCode("DUPLICATE_REQUEST"));
+    assert.equal(await db.walletTransaction.count({ where: { walletId: wallet.id, type: WalletTransactionType.PURCHASE } }), 0);
+    assert.equal(await db.walletReservation.count({ where: { walletId: wallet.id } }), 1);
+    await assert.rejects(() => createCustomerOrder(user.id, { ...input, targetUrl: "https://example.com/changed" }, "idem-repeat-0001"), isDomainCode("DUPLICATE_REQUEST"));
   });
 
   await t.test("CONCURRENCY: two 80k orders cannot overspend a 100k wallet", async () => {
     await resetDatabase();
     const user = await createUser("race@example.com", 100000n);
-    const input = { serviceId: "svc-active", targetUrl: "https://example.com/race", quantity: 800 };
+    const [quoteA, quoteB] = await Promise.all([
+      createOrderQuote(user.id, { serviceId: "svc-active", quantity: 800 }),
+      createOrderQuote(user.id, { serviceId: "svc-active", quantity: 800 })
+    ]);
     const results = await Promise.allSettled([
-      createCustomerOrder(user.id, input, "idem-race-a-0001"),
-      createCustomerOrder(user.id, input, "idem-race-b-0001")
+      createCustomerOrder(user.id, { quoteId: quoteA.id, targetUrl: "https://example.com/race-a" }, "idem-race-a-0001"),
+      createCustomerOrder(user.id, { quoteId: quoteB.id, targetUrl: "https://example.com/race-b" }, "idem-race-b-0001")
     ]);
     assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
     assert.equal(results.filter((result) => result.status === "rejected").length, 1);
     const db = getDb();
-    assert.equal((await db.wallet.findUniqueOrThrow({ where: { userId: user.id } })).balanceMinor, 20000n);
+    const wallet = await db.wallet.findUniqueOrThrow({ where: { userId: user.id } });
+    assert.equal(wallet.balanceMinor, 100000n);
+    assert.equal(wallet.reservedMinor, 80000n);
     assert.equal(await db.order.count({ where: { userId: user.id } }), 1);
   });
 
@@ -261,7 +281,7 @@ test("Work 04 backend/database integration", async (t) => {
     await resetDatabase();
     const owner = await createUser("owner@example.com", 200000n);
     const attacker = await createUser("attacker@example.com", 200000n);
-    const order = await createCustomerOrder(owner.id, { serviceId: "svc-active", targetUrl: "https://example.com/owned", quantity: 500 }, "idem-owned-0001");
+    const order = await createQuotedOrder(owner.id, { serviceId: "svc-active", targetUrl: "https://example.com/owned", quantity: 500 }, "idem-owned-0001");
     const ticket = await createSupportTicket(owner.id, { subject: "Yêu cầu của chủ tài khoản", category: "Order", message: "Cần kiểm tra đơn hàng." });
     await assert.rejects(() => getOwnedOrder(attacker.id, order.publicId), isDomainCode("ORDER_NOT_FOUND"));
     await assert.rejects(() => getOwnedTicket(attacker.id, ticket.publicId), isDomainCode("TICKET_NOT_FOUND"));
@@ -304,7 +324,7 @@ test("Work 04 backend/database integration", async (t) => {
   await t.test("PERSISTENCE: order, ticket and profile survive Prisma client disconnect/reconnect", async () => {
     await resetDatabase();
     const user = await createUser("persist@example.com", 200000n);
-    const order = await createCustomerOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/persist", quantity: 500 }, "idem-persist-0001");
+    const order = await createQuotedOrder(user.id, { serviceId: "svc-active", targetUrl: "https://example.com/persist", quantity: 500 }, "idem-persist-0001");
     const ticket = await createSupportTicket(user.id, { subject: "Dữ liệu bền vững", category: "General", message: "Không được mất sau reconnect." });
     await updateCustomerProfile(user.id, { name: "Persisted User", email: "persist@example.com", phone: "0900000000" });
 

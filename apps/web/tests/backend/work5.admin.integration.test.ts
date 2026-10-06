@@ -24,6 +24,7 @@ import {
   confirmDeposit,
   createCategory,
   createCustomerOrder,
+  createOrderQuote,
   createDepositRequest,
   createService,
   createSupportTicket,
@@ -65,10 +66,12 @@ async function reset() {
   await db.paymentEvent.deleteMany();
   await db.payment.deleteMany();
   await db.walletTransaction.deleteMany();
+  await db.walletReservation.deleteMany();
   await db.orderLog.deleteMany();
   await db.supportMessage.deleteMany();
   await db.deposit.deleteMany();
   await db.order.deleteMany();
+  await db.orderQuote.deleteMany();
   await db.supportTicket.deleteMany();
   await db.passwordResetToken.deleteMany();
   await db.session.deleteMany();
@@ -98,9 +101,19 @@ async function createCustomer(email: string, balance = 0n) {
   }
   return user;
 }
+async function createQuotedOrder(userId: string, input: { serviceId: string; targetUrl: string; quantity: number }, key: string) {
+  const quote = await createOrderQuote(userId, { serviceId: input.serviceId, quantity: input.quantity });
+  return createCustomerOrder(userId, { quoteId: quote.id, targetUrl: input.targetUrl }, key);
+}
 function domainCode(code: string) { return (error: unknown) => error instanceof DomainError && error.code === code; }
 
 test("Work 05 admin operations", async (t) => {
+  const previousProviderRouting = process.env.PROVIDER_ROUTING_ENABLED;
+  process.env.PROVIDER_ROUTING_ENABLED = "false";
+  t.after(() => {
+    if (previousProviderRouting === undefined) delete process.env.PROVIDER_ROUTING_ENABLED;
+    else process.env.PROVIDER_ROUTING_ENABLED = previousProviderRouting;
+  });
   passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
   await t.test("WALLET: positive/negative adjustments are ledger-backed and audited", async () => {
@@ -138,13 +151,16 @@ test("Work 05 admin operations", async (t) => {
 
   await t.test("ORDER REFUND: idempotent/concurrent and ledger/order log/audit remain consistent", async () => {
     await reset(); const admin = await createAdmin(); const customer = await createCustomer("refund@example.com", 300000n); const actor = { userId: admin.id };
-    const order = await createCustomerOrder(customer.id, { serviceId: "svc-admin-test", targetUrl: "https://example.com/refund", quantity: 1000 }, "work5-order-create");
-    assert.equal((await getDb().wallet.findUniqueOrThrow({ where: { userId: customer.id } })).balanceMinor, 200000n);
+    const order = await createQuotedOrder(customer.id, { serviceId: "svc-admin-test", targetUrl: "https://example.com/refund", quantity: 1000 }, "work5-order-create");
+    const reservedWallet = await getDb().wallet.findUniqueOrThrow({ where: { userId: customer.id } });
+    assert.equal(reservedWallet.balanceMinor, 300000n);
+    assert.equal(reservedWallet.reservedMinor, 100000n);
     await Promise.allSettled([refundOrder(actor, order.publicId, "Provider not submitted"), refundOrder(actor, order.publicId, "Provider not submitted")]);
     const wallet = await getDb().wallet.findUniqueOrThrow({ where: { userId: customer.id } });
     assert.equal(wallet.balanceMinor, 300000n);
+    assert.equal(wallet.reservedMinor, 0n);
     assert.equal((await getDb().order.findUniqueOrThrow({ where: { id: order.id } })).status, OrderStatus.REFUNDED);
-    assert.equal(await getDb().walletTransaction.count({ where: { walletId: wallet.id, type: WalletTransactionType.REFUND, referenceId: order.publicId } }), 1);
+    assert.equal(await getDb().walletTransaction.count({ where: { walletId: wallet.id, type: WalletTransactionType.REFUND, referenceId: order.publicId } }), 0);
     assert.equal(await getDb().orderLog.count({ where: { orderId: order.id, toStatus: OrderStatus.REFUNDED } }), 1);
     assert.equal(await getDb().adminAuditLog.count({ where: { action: "ORDER_REFUND", entityId: order.publicId } }), 1);
   });
@@ -175,11 +191,13 @@ test("Work 05 admin operations", async (t) => {
 
   await t.test("SETTINGS: disabling new orders does not break idempotent replay of an existing order", async () => {
     await reset(); const admin = await createAdmin(); const customer = await createCustomer("settings-order@example.com", 300000n); const actor = { userId: admin.id };
-    const existing = await createCustomerOrder(customer.id, { serviceId: "svc-admin-test", targetUrl: "https://example.com/settings-idempotency", quantity: 1000 }, "work5-settings-order");
+    const quote = await createOrderQuote(customer.id, { serviceId: "svc-admin-test", quantity: 1000 });
+    const input = { quoteId: quote.id, targetUrl: "https://example.com/settings-idempotency" };
+    const existing = await createCustomerOrder(customer.id, input, "work5-settings-order");
     await updateSystemSettings(actor, { siteName: "Tương Tác Pro", supportEmail: "support@example.com", maintenanceMode: false, minimumDepositMinor: 50000n, orderCreationEnabled: false, supportEnabled: true });
-    const replay = await createCustomerOrder(customer.id, { serviceId: "svc-admin-test", targetUrl: "https://example.com/settings-idempotency", quantity: 1000 }, "work5-settings-order");
+    const replay = await createCustomerOrder(customer.id, input, "work5-settings-order");
     assert.equal(replay.id, existing.id);
-    await assert.rejects(() => createCustomerOrder(customer.id, { serviceId: "svc-admin-test", targetUrl: "https://example.com/settings-new", quantity: 1000 }, "work5-settings-new-order"), domainCode("SERVICE_UNAVAILABLE"));
+    await assert.rejects(() => createOrderQuote(customer.id, { serviceId: "svc-admin-test", quantity: 1000 }), domainCode("SERVICE_UNAVAILABLE"));
     assert.equal(await getDb().order.count({ where: { userId: customer.id } }), 1);
   });
 
