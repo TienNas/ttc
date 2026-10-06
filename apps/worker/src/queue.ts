@@ -1,12 +1,12 @@
 import { ProviderJobStatus, getDb, type ProviderJob } from "@tuong-tac-pro/db";
-import { computeBackoffMs } from "@tuong-tac-pro/providers";
+import { computeBackoffMs, parseProviderRuntimeConfig } from "@tuong-tac-pro/providers";
 
-const LOCK_TIMEOUT_MS = Number(process.env.PROVIDER_JOB_LOCK_TIMEOUT_MS || 5 * 60_000);
-
-export async function claimDueProviderJobs(workerId: string, batchSize = Number(process.env.PROVIDER_JOB_BATCH_SIZE || 10)): Promise<ProviderJob[]> {
+export async function claimDueProviderJobs(workerId: string, batchSize?: number): Promise<ProviderJob[]> {
   const db = getDb();
+  const config = parseProviderRuntimeConfig();
+  const effectiveBatchSize = batchSize ?? config.jobBatchSize;
   const now = new Date();
-  const stale = new Date(now.getTime() - LOCK_TIMEOUT_MS);
+  const stale = new Date(now.getTime() - config.jobLockTimeoutMs);
   const candidates = await db.providerJob.findMany({
     where: {
       OR: [
@@ -15,7 +15,7 @@ export async function claimDueProviderJobs(workerId: string, batchSize = Number(
       ]
     },
     orderBy: [{ runAt: "asc" }, { createdAt: "asc" }],
-    take: Math.max(1, Math.min(batchSize, 100))
+    take: effectiveBatchSize
   });
   const claimed: ProviderJob[] = [];
   for (const candidate of candidates) {

@@ -19,7 +19,7 @@ for (const marker of ["refundedMinor", "providerRateSnapshotMinor", "providerCos
 
 for (const path of [
   "packages/providers/src/contracts.ts", "packages/providers/src/errors.ts", "packages/providers/src/pricing.ts", "packages/providers/src/retry.ts",
-  "packages/providers/src/sanitize.ts", "packages/providers/src/http.ts", "packages/providers/src/registry.ts", "packages/providers/src/adapters/ttc-provider-adapter.ts",
+  "packages/providers/src/sanitize.ts", "packages/providers/src/http.ts", "packages/providers/src/registry.ts", "packages/providers/src/config.ts", "packages/providers/src/adapters/ttc-provider-adapter.ts",
   "apps/worker/src/queue.ts", "apps/worker/src/rate-limit.ts", "apps/worker/src/provider-worker.ts", "apps/worker/src/index.ts", "packages/domain/src/provider-domain.ts"
 ]) required(path);
 
@@ -28,14 +28,20 @@ for (const method of ["testConnection()", "getBalance()", "getServices()", "crea
   assert(contract.includes(method), `ProviderAdapter missing ${method}`);
 }
 const ttc = read("packages/providers/src/adapters/ttc-provider-adapter.ts");
-assert(ttc.includes("https://tuongtaccheo.com/api/v2"), "Verified TTC API v2 base URL is missing");
 assert(ttc.includes('Content-Type": "application/x-www-form-urlencoded"'), "TTC adapter must use documented form-urlencoded requests");
 for (const action of ['"services"', '"add"', '"status"', '"cancel"', '"balance"']) {
   assert(ttc.includes(action), `TTC adapter missing documented action ${action}`);
 }
 assert(ttc.includes("providerFetch"), "TTC adapter must use the hardened provider HTTP boundary");
-assert(ttc.includes("TTC_XU_TO_VND_RATE"), "TTC provider price conversion guard is missing");
+assert(ttc.includes("parseProviderRuntimeConfig"), "TTC adapter must use centralized provider configuration");
 assert(ttc.includes("supportsCreateIdempotency: false"), "TTC create idempotency must remain false because the documented API has no idempotency/reference field");
+
+const providerConfig = read("packages/providers/src/config.ts");
+assert(providerConfig.includes("https://tuongtaccheo.com/api/v2"), "Verified TTC API v2 base URL is missing");
+for (const key of ["PROVIDER_ROUTING_ENABLED", "PROVIDER_JOB_LOCK_TIMEOUT_MS", "PROVIDER_POLL_INITIAL_MS", "PROVIDER_POLL_MAX_MS", "TTC_HTTP_TIMEOUT_MS", "TTC_XU_TO_VND_RATE", "TTC_RATE_UNIT", "TTC_RATE_INPUT_UNIT"]) {
+  assert(providerConfig.includes(key), `Centralized provider configuration is missing ${key}`);
+}
+assert(providerConfig.includes("jobLockTimeoutMs <= httpTimeoutMs"), "Provider configuration must prevent reclaiming a job during a provider HTTP request");
 
 const queue = read("apps/worker/src/queue.ts");
 assert(queue.includes("providerJob.findMany") && queue.includes("providerJob.updateMany"), "Worker queue must be PostgreSQL-backed and claim jobs conditionally");
@@ -49,7 +55,7 @@ const limiter = read("apps/worker/src/rate-limit.ts");
 assert(limiter.includes("providerRequestLease") && limiter.includes("maxConcurrentRequests") && limiter.includes("minRequestIntervalMs"), "Centralized provider outbound concurrency/rate limiting is missing");
 
 const customerDomain = read("packages/domain/src/customer-domain.ts");
-assert(customerDomain.includes("PROVIDER_ROUTING_ENABLED") && customerDomain.includes("serviceProviderMapping.findFirst"), "Customer order admission must require a routable mapping when provider routing is enabled");
+assert(customerDomain.includes("isProviderRoutingEnabled") && customerDomain.includes("serviceProviderMapping.findFirst"), "Customer order admission must require a routable mapping when provider routing is enabled");
 assert(customerDomain.includes("enqueueOrderSubmissionIfEnabled"), "Customer order transaction must enqueue durable provider submission work");
 const customerQueries = read("apps/web/src/server/customer-queries.ts");
 assert(customerQueries.includes("providerRoutableServiceWhere"), "Customer catalog must filter to routable services when provider routing is enabled");

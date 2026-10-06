@@ -113,11 +113,17 @@ async function seedProvider() {
 
 beforeEach(async () => {
   process.env.PROVIDER_ROUTING_ENABLED = "false";
+  process.env.TTC_API_KEY = "work6-test-key";
+  process.env.TTC_XU_TO_VND_RATE = "1";
+  process.env.TTC_RATE_INPUT_UNIT = "1";
   await reset();
 });
 
 after(async () => {
   delete process.env.PROVIDER_ROUTING_ENABLED;
+  delete process.env.TTC_API_KEY;
+  delete process.env.TTC_XU_TO_VND_RATE;
+  delete process.env.TTC_RATE_INPUT_UNIT;
   await disconnectDb();
 });
 

@@ -5,4 +5,5 @@ export * from "./pricing";
 export * from "./retry";
 export * from "./registry";
 export * from "./http";
+export * from "./config";
 export * from "./adapters/ttc-provider-adapter";

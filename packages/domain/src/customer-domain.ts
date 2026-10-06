@@ -19,6 +19,7 @@ import { DomainError } from "./errors";
 import { createPublicId } from "./id";
 import { calculateChargeMinor } from "./money";
 import { enqueueOrderSubmissionIfEnabled } from "./provider-domain";
+import { isProviderRoutingEnabled } from "@tuong-tac-pro/providers";
 
 export type OrderCreateInput = { serviceId: string; targetUrl: string; quantity: number };
 export type TicketCreateInput = { subject: string; category: string; message: string };
@@ -138,7 +139,8 @@ export async function createCustomerOrder(userId: string, input: OrderCreateInpu
       const service = await tx.service.findUnique({ where: { id: input.serviceId } });
       if (!service) throw new DomainError("SERVICE_NOT_FOUND", "Không tìm thấy dịch vụ.", 404);
       if (service.status !== ServiceStatus.ACTIVE) throw new DomainError("SERVICE_UNAVAILABLE", "Dịch vụ hiện không nhận đơn mới.", 409);
-      if (process.env.PROVIDER_ROUTING_ENABLED === "true") {
+      const providerRoutingEnabled = isProviderRoutingEnabled();
+      if (providerRoutingEnabled) {
         const mapping = await tx.serviceProviderMapping.findFirst({
           where: {
             serviceId: service.id,
@@ -202,7 +204,7 @@ export async function createCustomerOrder(userId: string, input: OrderCreateInpu
         data: {
           orderId: order.id,
           toStatus: OrderStatus.PENDING,
-          message: process.env.PROVIDER_ROUTING_ENABLED === "true"
+          message: providerRoutingEnabled
             ? "Đơn hàng đã được tạo và đang chờ worker gửi tới nhà cung cấp."
             : "Đơn hàng đã được tạo; provider routing hiện chưa được bật."
         }

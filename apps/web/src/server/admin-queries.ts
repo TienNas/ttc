@@ -13,6 +13,7 @@ import {
   WalletTransactionType,
   getDb
 } from "@tuong-tac-pro/db";
+import { parseProviderRuntimeConfig } from "@tuong-tac-pro/providers";
 import { moneyToSafeNumber } from "@tuong-tac-pro/domain";
 import type {
   AdminAnalytics,
@@ -582,7 +583,7 @@ function providerBase(row: {
     enabled: row.enabled,
     priority: row.priority,
     baseUrlConfigured: Boolean(row.baseUrl),
-    credentialConfigured: row.code === "TTC" ? Boolean(process.env.TTC_API_KEY) : false,
+    credentialConfigured: row.code === "TTC" ? Boolean(parseProviderRuntimeConfig().ttc.apiKey) : false,
     balance: row.balanceMinor === null ? null : moneyToSafeNumber(row.balanceMinor),
     balanceCurrency: row.balanceCurrency ?? "",
     lastBalanceSyncAt: row.lastBalanceSyncAt?.toISOString() ?? null,

@@ -87,6 +87,10 @@ The documented response contains `balance` and `currency`. The supplied document
 
 The application sells customer services in VND, while the TTC documentation reports provider balance/rates in XU. Work 06 does not assume an exchange value.
 
+Work 07.1 centralizes provider environment parsing. `TTC_XU_TO_VND_RATE` is intentionally blank in `.env.example`; routing fails closed until an authoritative positive decimal conversion, API key and rate-input unit are configured. Numeric values reject signs, whitespace, decimals where integers are required and exponent notation. Provider routing can remain disabled without TTC credentials for local development, builds and unit tests.
+
+Worker timing is validated before use. The job lock timeout must exceed the TTC HTTP timeout so a job cannot become stale while its provider request is still within the configured request window. Poll intervals, batch size and retry attempts must also be positive and internally consistent.
+
 Before syncing TTC services into authoritative provider economics, configure:
 
 ```env
@@ -134,15 +138,8 @@ npm run qa:ttc:order
 This can spend TTC provider balance. It must not be used with production customer data unintentionally.
 
 
-## TTC raw-rate normalization (verified 2026-09)
+## TTC raw-rate normalization
 
-Live TTC service audit returned rates such as Facebook Like = 1800 XU and TikTok View = 250 XU for one requested unit.
-For this deployment:
+The adapter normalizes provider XU cost to VND per internal rate unit before `ProviderService` persistence. The repository does not contain an authoritative XU-to-VND conversion. Configure `TTC_XU_TO_VND_RATE` only from verified account/provider evidence during Work 07.2, together with the provider's rate-input unit. Keep routing disabled until that evidence is recorded and the resulting margins are reviewed.
 
-- `TTC_XU_TO_VND_RATE=0.0175`
-- `TTC_RATE_INPUT_UNIT=1`
-- `TTC_RATE_UNIT=1000`
-
-The adapter normalizes provider cost to VND per 1,000 internal units before ProviderService persistence.
-Example: 1800 XU x 0.0175 VND/XU x 1000 = 31,500 VND per 1,000.
 Custom Comments services are synced but remain unavailable for automatic ordering until the customer Order input model carries the required comments/text payload.

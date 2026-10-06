@@ -37,6 +37,7 @@
     "typecheck:providers": "npm --workspace @tuong-tac-pro/providers run typecheck",
     "typecheck:worker": "npm --workspace @tuong-tac-pro/worker run typecheck",
     "test:providers": "npm --workspace @tuong-tac-pro/providers run test",
+    "test:db-config": "npm --workspace @tuong-tac-pro/db run test:config",
     "test:worker": "npm run db:test:prepare && npm --workspace @tuong-tac-pro/worker run test",
     "test:work6": "npm run test:providers && npm run test:backend && npm run test:worker",
     "qa:work6:static": "node qa/work6-provider-contract-check.mjs",

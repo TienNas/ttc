@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   typedRoutes: false,
-  transpilePackages: ["@tuong-tac-pro/db", "@tuong-tac-pro/domain"]
+  transpilePackages: ["@tuong-tac-pro/db", "@tuong-tac-pro/domain", "@tuong-tac-pro/providers"]
 };
 
 export default nextConfig;

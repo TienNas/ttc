@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { disconnectDb } from "@tuong-tac-pro/db";
-import { createDefaultProviderRegistry } from "@tuong-tac-pro/providers";
+import { createDefaultProviderRegistry, parseProviderRuntimeConfig } from "@tuong-tac-pro/providers";
 import { claimDueProviderJobs } from "./queue";
 import { processProviderJob } from "./provider-worker";
 
-const workerId = process.env.PROVIDER_WORKER_ID || `provider-worker-${randomUUID().slice(0, 8)}`;
-const pollMs = Math.max(250, Number(process.env.PROVIDER_WORKER_POLL_MS || 1000));
+const config = parseProviderRuntimeConfig();
+const workerId = config.workerId ?? `provider-worker-${randomUUID().slice(0, 8)}`;
+const pollMs = config.workerPollMs;
 const once = process.argv.includes("--once") || process.env.PROVIDER_WORKER_ONCE === "true";
 const registry = createDefaultProviderRegistry();
 

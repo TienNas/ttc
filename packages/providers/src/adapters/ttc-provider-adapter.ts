@@ -13,11 +13,9 @@ import type {
 } from "../contracts";
 import { ProviderAdapterError } from "../errors";
 import { providerFetch } from "../http";
+import { parseProviderRuntimeConfig } from "../config";
 
-const DEFAULT_TTC_API_URL = "https://tuongtaccheo.com/api/v2";
 const TTC_ALLOWED_HOSTS = ["tuongtaccheo.com", "www.tuongtaccheo.com"] as const;
-const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_RATE_UNIT = 1_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
 const SUPPORTED_ORDER_TYPES = new Set(["default", "package"]);
 
@@ -184,12 +182,13 @@ export class TTCProviderAdapter implements ProviderAdapter {
   private readonly rateUnit: number;
 
   constructor(config: TTCProviderConfig = {}) {
-    this.baseUrl = (config.baseUrl ?? process.env.TTC_API_BASE_URL ?? DEFAULT_TTC_API_URL).trim();
-    this.apiKey = (config.apiKey ?? process.env.TTC_API_KEY ?? "").trim();
-    this.timeoutMs = config.timeoutMs ?? Number(process.env.TTC_HTTP_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
-    this.xuToVndRate = (config.xuToVndRate ?? process.env.TTC_XU_TO_VND_RATE ?? "").trim();
-    this.rateInputUnit = config.rateInputUnit ?? Number(process.env.TTC_RATE_INPUT_UNIT || "");
-    this.rateUnit = config.rateUnit ?? Number(process.env.TTC_RATE_UNIT || DEFAULT_RATE_UNIT);
+    const runtime = parseProviderRuntimeConfig();
+    this.baseUrl = config.baseUrl ?? runtime.ttc.apiBaseUrl;
+    this.apiKey = config.apiKey ?? runtime.ttc.apiKey;
+    this.timeoutMs = config.timeoutMs ?? runtime.ttc.httpTimeoutMs;
+    this.xuToVndRate = config.xuToVndRate ?? runtime.ttc.xuToVndRate ?? "";
+    this.rateInputUnit = config.rateInputUnit ?? runtime.ttc.rateInputUnit ?? 0;
+    this.rateUnit = config.rateUnit ?? runtime.ttc.rateUnit;
   }
 
   private endpoint(): URL {

@@ -26,6 +26,7 @@ import {
   decideProviderRetry,
   grossMargin,
   hasSafeMargin,
+  parseProviderRuntimeConfig,
   sanitizeProviderErrorMessage,
   sanitizeProviderValue,
   toProviderAdapterError,
@@ -35,9 +36,6 @@ import {
 } from "@tuong-tac-pro/providers";
 import { completeProviderJob, failProviderJob, manualReviewProviderJob, retryProviderJob } from "./queue";
 import { withProviderRequestLease } from "./rate-limit";
-
-const INITIAL_POLL_MS = Number(process.env.PROVIDER_POLL_INITIAL_MS || 60_000);
-const MAX_POLL_MS = Number(process.env.PROVIDER_POLL_MAX_MS || 20 * 60_000);
 
 const TERMINAL_INTERNAL_ORDER_STATUSES: ReadonlySet<OrderStatus> = new Set<OrderStatus>([
   OrderStatus.COMPLETED,
@@ -349,7 +347,9 @@ async function handleSubmitOrder(job: ProviderJob, registry: ProviderRegistry) {
     });
     await markProviderHealth(provider.id, ProviderHealth.HEALTHY);
     await operationLog({ providerId: provider.id, orderId: order.id, externalOrderId: result.externalOrderId, operation: "CREATE_ORDER", startedAt, result: "SUCCESS", attempt: attemptNo });
-    if (internalStatus !== OrderStatus.COMPLETED) await schedulePoll(providerOrder.id, provider.id, order.id, INITIAL_POLL_MS);
+    if (internalStatus !== OrderStatus.COMPLETED) {
+      await schedulePoll(providerOrder.id, provider.id, order.id, parseProviderRuntimeConfig().pollInitialMs);
+    }
   } catch (error) {
     const providerError = toProviderAdapterError(error, true);
     const decision = decideProviderRetry(providerError, job.attempts, job.maxAttempts, {
@@ -451,7 +451,8 @@ async function handlePoll(job: ProviderJob, registry: ProviderRegistry) {
       responsePayload: sanitizeProviderValue(result.raw) as object | undefined
     });
     const ageMinutes = Math.max(0, (Date.now() - providerOrder.createdAt.getTime()) / 60_000);
-    const delay = Math.min(MAX_POLL_MS, INITIAL_POLL_MS * Math.max(1, Math.ceil(ageMinutes / 30)));
+    const config = parseProviderRuntimeConfig();
+    const delay = Math.min(config.pollMaxMs, config.pollInitialMs * Math.max(1, Math.ceil(ageMinutes / 30)));
     await schedulePoll(providerOrder.id, providerOrder.providerId, providerOrder.orderId, delay);
   } catch (error) {
     const providerError = toProviderAdapterError(error, false);

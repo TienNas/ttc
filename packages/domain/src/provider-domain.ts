@@ -16,6 +16,7 @@ import {
 import {
   calculateProviderCost,
   calculateSellingRate,
+  parseProviderRuntimeConfig,
   proportionalRefundTarget,
   sanitizeProviderValue,
   type NormalizedProviderService
@@ -109,14 +110,14 @@ export async function enqueueProviderJob(
       providerOrderId: input.providerOrderId ?? null,
       payload: input.payload,
       runAt: input.runAt ?? new Date(),
-      maxAttempts: input.maxAttempts ?? Number(process.env.PROVIDER_MAX_ATTEMPTS || 6)
+      maxAttempts: input.maxAttempts ?? parseProviderRuntimeConfig().maxAttempts
     },
     update: {}
   });
 }
 
 export async function enqueueOrderSubmissionIfEnabled(tx: Prisma.TransactionClient, orderId: string, publicId: string) {
-  if (process.env.PROVIDER_ROUTING_ENABLED !== "true") return null;
+  if (!parseProviderRuntimeConfig().routingEnabled) return null;
   return enqueueProviderJob(tx, {
     type: ProviderJobType.SUBMIT_ORDER,
     dedupeKey: `submit:${orderId}`,

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import argon2 from "argon2";
 import { getDb } from "../src/client";
+import { resolveDevelopmentSeedConfig } from "../src/seed-safety";
 import { DepositStatus, OrderStatus, ProviderHealth, ProviderStatus, SocialPlatform, ServiceStatus, SupportSenderType, SupportTicketStatus, UserRole, UserStatus, DepositMethodType, WalletTransactionStatus, WalletTransactionType } from "../generated/prisma/client";
 
 const rootEnvPath = fileURLToPath(new URL("../../../.env", import.meta.url));
@@ -114,9 +115,10 @@ async function main() {
     }
   });
 
-  if (process.env.SEED_DEVELOPMENT_ACCOUNT !== "false") {
-    const email = (process.env.SEED_DEVELOPMENT_EMAIL ?? "minh@example.com").trim().toLowerCase();
-    const password = process.env.SEED_DEVELOPMENT_PASSWORD ?? "demo1234";
+  const developmentSeed = resolveDevelopmentSeedConfig();
+  if (developmentSeed.enabled) {
+    const email = developmentSeed.customerEmail;
+    const password = developmentSeed.customerPassword;
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     const user = await db.user.upsert({
       where: { email },
@@ -159,8 +161,8 @@ async function main() {
       });
     }
 
-    const adminEmail = (process.env.SEED_ADMIN_EMAIL ?? "admin@example.com").trim().toLowerCase();
-    const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "Admin1234";
+    const adminEmail = developmentSeed.adminEmail;
+    const adminPassword = developmentSeed.adminPassword;
     const adminPasswordHash = await argon2.hash(adminPassword, { type: argon2.argon2id });
     await db.user.upsert({
       where: { email: adminEmail },
@@ -168,8 +170,8 @@ async function main() {
       create: { email: adminEmail, passwordHash: adminPasswordHash, name: "Tương Tác Pro Admin", status: UserStatus.ACTIVE, role: UserRole.ADMIN }
     });
 
-    const secondEmail = (process.env.SEED_DEVELOPMENT_SECOND_EMAIL ?? "lan@example.com").trim().toLowerCase();
-    const secondPassword = process.env.SEED_DEVELOPMENT_SECOND_PASSWORD ?? "demo1234";
+    const secondEmail = developmentSeed.secondaryEmail;
+    const secondPassword = developmentSeed.secondaryPassword;
     const secondHash = await argon2.hash(secondPassword, { type: argon2.argon2id });
     const secondUser = await db.user.upsert({
       where: { email: secondEmail },

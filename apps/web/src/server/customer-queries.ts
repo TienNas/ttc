@@ -1,5 +1,6 @@
 import { getDb, OrderStatus, Prisma, ProviderMappingStatus, ProviderServiceStatus, ProviderStatus, ServiceStatus, SocialPlatform } from "@tuong-tac-pro/db";
 import { getOwnedTicket, moneyToSafeNumber } from "@tuong-tac-pro/domain";
+import { isProviderRoutingEnabled } from "@tuong-tac-pro/providers";
 import { toCategory, toDeposit, toDepositMethod, toOrder, toProfile, toService, toSupportMessage, toTicket, toWallet, toWalletTransaction } from "./mappers";
 
 const platformToDb = {
@@ -21,7 +22,7 @@ const publicStatusToDb = {
 } as const;
 
 function providerRoutableServiceWhere(): Prisma.ServiceWhereInput {
-  if (process.env.PROVIDER_ROUTING_ENABLED !== "true") return {};
+  if (!isProviderRoutingEnabled()) return {};
   return {
     status: ServiceStatus.ACTIVE,
     providerMappings: {
@@ -115,7 +116,7 @@ export async function readServices(filters: { search?: string; platform?: string
 
 export async function readService(id: string) {
   const routable = providerRoutableServiceWhere();
-  const service = process.env.PROVIDER_ROUTING_ENABLED === "true"
+  const service = isProviderRoutingEnabled()
     ? await getDb().service.findFirst({ where: { id, ...routable } })
     : await getDb().service.findUnique({ where: { id } });
   return service ? toService(service) : null;

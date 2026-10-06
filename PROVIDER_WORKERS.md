@@ -4,6 +4,8 @@
 
 Work 06 uses PostgreSQL-backed durable jobs. It does not use an in-memory array and does not require a browser to remain open.
 
+Work 07.1 adds strict shared parsing for worker/provider environment settings. In particular, `PROVIDER_JOB_LOCK_TIMEOUT_MS` must be greater than `TTC_HTTP_TIMEOUT_MS`, `PROVIDER_POLL_INITIAL_MS` must not exceed `PROVIDER_POLL_MAX_MS`, and batch/retry/poll values must be unsigned integers in their supported ranges. Invalid configuration stops the worker instead of being clamped or silently coerced.
+
 `apps/worker` handles:
 
 - `SUBMIT_ORDER`
